@@ -1,0 +1,274 @@
+
+#!/bin/bash
+
+#Variables
+#########################
+#LOGIN / PASS
+LOGIN="username"
+PASSWORD="password"
+#Server where is stored the log and the saves
+HOST_IP_LOG="server1"
+LOG_POINT="c$"
+LOG_FILE_PATH="Scripts\log"
+
+#################################################################
+#Each argument needs to have the format _Robocopy_nameserver.txt#
+#################################################################
+#Backup from monday to friday.
+server_windows=(server2 server3 server4)
+#Weekend Backup
+server_windows_we=(server2 server4 server5)
+#Rsync  copies ach argument needs to have the format _Rsync_nameserver.txt
+server_linux=(server6 server7 server8)
+
+
+
+#Date variables
+YESTERDAY_DATE=$(date --date='1 days ago' '+%Y%m%d')
+TODAY_DATE=$(date '+%Y%m%d')
+day_of_week=$(date -u | cut -d " " -f1)
+
+
+#Remove previous error files and then create them again.
+rm -f /tmp/Rsync_Robocopy.txt
+rm -f /tmp/Rsync_Robocopy_errors.txt
+
+touch /tmp/Rsync_Robocopy.txt
+touch /tmp/Rsync_Robocopy_errors.txt
+
+
+#################################################
+#For Windows backups                            #
+#There is a Monday to Friday backup and         #
+#another that runs on Saturday                  #
+#################################################
+
+#If is Monday don't check the Sunday because it does not exist
+if  [[ $day_of_week -ne "lundi" || $day_of_week -ne "monday" ]];then
+
+        #If is Sunday then the weekend backups that run on Saturday are checked
+        if  [[ $day_of_week -eq "dimanche" || $day_of_week -eq "sunday" ]];then
+                for var1 in ${server_windows_we[*]}; do
+
+                    #Copy the log from server1 to a tmp location to work with it
+                    smbclient -U $LOGIN%$PASSWORD //$HOST_IP_LOG/$LOG_POINT -c "get $LOG_FILE_PATH\\${YESTERDAY_DATE}_Robocopy_$var1.txt /tmp/${YESTERDAY_DATE}_Robocopy_$var1.txt" > /dev/null 2>&1
+
+                    #If log file does not exist either the the backup is not running or there is other problem
+                    if [[ ! -e /tmp/${YESTERDAY_DATE}_Robocopy_$var1.txt ]]; then
+                        status=2
+                        echo "$status Rsync_Robocopy - $statustxt CRITICAL - $var1 Log file does not exist"
+                        exit 0
+                    fi
+
+                    ## Count the number of errors
+                    ERRORS_COUNT=$(cat /tmp/${YESTERDAY_DATE}_Robocopy_$var1.txt | grep "Files :  " | grep -v '^ *Files : \*.*' | awk '{s=s+$7} END {print s}')
+
+
+                    #Getting the start and end time to calculate the spent time
+                    START_TIME=$(head -n 2 /tmp/${YESTERDAY_DATE}_Robocopy_$var1.txt | tail -n 1)
+                    END_TIME=$(tail -n 2 /tmp/${YESTERDAY_DATE}_Robocopy_$var1.txt | head -n 1)
+                    START_HOURS=$(echo $START_TIME | cut -d: -f1)
+                    START_MINUTES=$(echo $START_TIME | cut -d: -f2)
+                    END_HOURS=$(echo $END_TIME | cut -d: -f1)
+                    END_MINUTES=$(echo $END_TIME | cut -d: -f2)
+                    START_HOURS_1=${START_HOURS:0:1}
+                    START_HOURS_2=${START_HOURS:1:1}
+                    START_MINUTES_1=${START_MINUTES:0:1}
+                    START_MINUTES_2=${START_MINUTES:1:1}
+                    END_HOURS_1=${END_HOURS:0:1}
+                    END_HOURS_2=${END_HOURS:1:1}
+                    END_MINUTES_1=${END_MINUTES:0:1}
+                    END_MINUTES_2=${END_MINUTES:1:1}
+                    CALC_START_TIME=$((((($START_HOURS_1*10)+$START_HOURS_2)*60)+(($START_MINUTES_1*10)+$START_MINUTES_2)))
+                    CALC_END_TIME=$((((($END_HOURS_1*10)+$END_HOURS_2)*60)+(($END_MINUTES_1*10)+$END_MINUTES_2)))
+
+                    if [[ $CALC_START_TIME -gt $CALC_END_TIME ]]; then
+                        SPEND_TIME_BEFORE_MIDNIGHT=$((1440-$CALC_START_TIME))
+                        SPEND_TIME=$(($SPEND_TIME_BEFORE_MIDNIGHT+$CALC_END_TIME))
+                    else
+                        SPEND_TIME=$(($CALC_END_TIME-$CALC_START_TIME))
+                    fi
+
+                    #Calculate backup
+                    BACKUP_SIZE=$(cat /tmp/${YESTERDAY_DATE}_Robocopy_$var1.txt | grep "Bytes :" | sed -e 's/g/1/' | sed -e 's/m/0.1/' | awk '{s=s+($3*$4)} END {print s}')
+
+                    #Remove temporal file
+                    rm -f /tmp/${YESTERDAY_DATE}_Robocopy_$var1.txt
+
+
+                    ####   ADD The name of server + spend time + size of backup
+                    echo "--------------------------" >> /tmp/Rsync_Robocopy.txt
+                    echo "--------------------------" >> /tmp/Rsync_Robocopy.txt
+                    echo "$var1" >> /tmp/Rsync_Robocopy.txt
+                    echo "Time spend : $SPEND_TIME" >> /tmp/Rsync_Robocopy.txt
+                    echo "Size of backup : $BACKUP_SIZE bytes" >> /tmp/Rsync_Robocopy.txt
+
+                    # If there is errors, add the name of the server to the list
+                    if [[ $ERRORS_COUNT -ne 0 ]];then
+                        echo "$var1" >> /tmp/Rsync_Robocopy_errors.txt
+                    fi
+                done
+
+        #If is not Monday or Sunday, then the backups that run daily are checked
+        else
+                for var1 in ${server_windows[*]}; do
+                    #An exception to Fix the date on a backup that start after midnight
+                    if [$server_windows="serverX"];then
+                    YESTERDAY_DATE=$(date  '+%Y%m%d')
+                    fi
+                    #Copy the log from server1 to a tmp location to work with it
+                    smbclient -U $LOGIN%$PASSWORD //$HOST_IP_LOG/$LOG_POINT -c "get $LOG_FILE_PATH\\${YESTERDAY_DATE}_Robocopy_$var1.txt /tmp/${YESTERDAY_DATE}_Robocopy_$var1.txt" > /dev/null 2>&1
+
+                    #If log file does not exist either the the backup is not running or there is other problem
+                    if [[ ! -e /tmp/${YESTERDAY_DATE}_Robocopy_$var1.txt ]]; then
+                        status=2
+                        echo "$status Rsync_Robocopy - $statustxt CRITICAL - $var1 Log file does not exist"
+                        exit 0
+                    fi
+
+                    ## Count the number of errors
+                    ERRORS_COUNT=$(cat /tmp/${YESTERDAY_DATE}_Robocopy_$var1.txt | grep "Files :  " | grep -v '^ *Files : \*.*' | awk '{s=s+$7} END {print s}')
+
+
+
+                    #Getting the start and end time to calculate the spent time
+                    START_TIME=$(head -n 2 /tmp/${YESTERDAY_DATE}_Robocopy_$var1.txt | tail -n 1)
+                    END_TIME=$(tail -n 2 /tmp/${YESTERDAY_DATE}_Robocopy_$var1.txt | head -n 1)
+                    START_HOURS=$(echo $START_TIME | cut -d: -f1)
+                    START_MINUTES=$(echo $START_TIME | cut -d: -f2)
+                    END_HOURS=$(echo $END_TIME | cut -d: -f1)
+                    END_MINUTES=$(echo $END_TIME | cut -d: -f2)
+                    START_HOURS_1=${START_HOURS:0:1}
+                    START_HOURS_2=${START_HOURS:1:1}
+                    START_MINUTES_1=${START_MINUTES:0:1}
+                    START_MINUTES_2=${START_MINUTES:1:1}
+                    END_HOURS_1=${END_HOURS:0:1}
+                    END_HOURS_2=${END_HOURS:1:1}
+                    END_MINUTES_1=${END_MINUTES:0:1}
+                    END_MINUTES_2=${END_MINUTES:1:1}
+                    CALC_START_TIME=$((((($START_HOURS_1*10)+$START_HOURS_2)*60)+(($START_MINUTES_1*10)+$START_MINUTES_2)))
+                    CALC_END_TIME=$((((($END_HOURS_1*10)+$END_HOURS_2)*60)+(($END_MINUTES_1*10)+$END_MINUTES_2)))
+
+                    if [[ $CALC_START_TIME -gt $CALC_END_TIME ]]; then
+                        SPEND_TIME_BEFORE_MIDNIGHT=$((1440-$CALC_START_TIME))
+                        SPEND_TIME=$(($SPEND_TIME_BEFORE_MIDNIGHT+$CALC_END_TIME))
+                    else
+                        SPEND_TIME=$(($CALC_END_TIME-$CALC_START_TIME))
+                    fi
+
+                    #Calculate backup
+                    BACKUP_SIZE=$(cat /tmp/${YESTERDAY_DATE}_Robocopy_$var1.txt | grep "Bytes :" | sed -e 's/g/1/' | sed -e 's/m/0.1/' | awk '{s=s+($3*$4)} END {print s}')
+
+                    #Remove temporal file
+                    rm -f /tmp/${YESTERDAY_DATE}_Robocopy_$var1.txt
+
+
+                    ####   ADD The name of server + spend time + size of backup
+                    echo "--------------------------" >> /tmp/Rsync_Robocopy.txt
+                    echo "--------------------------" >> /tmp/Rsync_Robocopy.txt
+                    echo "$var1" >> /tmp/Rsync_Robocopy.txt
+                    echo "Time spend : $SPEND_TIME" >> /tmp/Rsync_Robocopy.txt
+                    echo "Size of backup : $BACKUP_SIZE bytes" >> /tmp/Rsync_Robocopy.txt
+
+                    # If there is errors, add the name of the server to the list
+                    if [[ $ERRORS_COUNT -ne 0 ]];then
+                        echo "$var1" >> /tmp/Rsync_Robocopy_errors.txt
+                    fi
+                done
+        fi
+
+fi
+
+#################################################
+#For Rsync                                      #
+#################################################
+
+        for var2 in ${server_linux[*]}; do
+
+            #Copy the log from km02 to a tmp location to work with it
+            smbclient -U $LOGIN%$PASSWORD //$HOST_IP_LOG/$LOG_POINT -c "get $LOG_FILE_PATH\\${TODAY_DATE}_Rsync_$var2.txt /tmp/${TODAY_DATE}_Rsync_$var2.txt" > /dev/null 2>&1
+
+            #If log file does not exist either the the backup is not running or there is other problem
+            if [[ ! -e /tmp/${TODAY_DATE}_Rsync_$var2.txt ]]; then
+                status=2
+                echo "$status Rsync_Robocopy - $statustxt CRITICAL - $var2 Log file does not exist"
+                exit 0
+            fi
+
+            Check_if_work=$(grep -w "total size is"  -c /tmp/${TODAY_DATE}_Rsync_$var2.txt)
+            #If log file contains nothing show and error
+            if [[ $Check_if_work -eq 0 ]]; then
+                status=2
+                echo "$status Rsync_Robocopy - $statustxt CRITICAL - $var2 Log exist but is empty"
+                exit 0
+            fi
+
+    ## Count the errors
+       ERRORS_COUNT=$(grep -w "rsync errors"  -c /tmp/${TODAY_DATE}_Rsync_$var2.txt)
+
+
+    #Getting the start and end time to calculate the spent time
+            START_TIME=$(head -n 2 /tmp/${TODAY_DATE}_Rsync_$var2.txt | tail -n 1)
+            END_TIME=$(tail -n 2 /tmp/${TODAY_DATE}_Rsync_$var2.txt | head -n 1)
+            START_HOURS=$(echo $START_TIME | cut -d: -f1)
+            START_MINUTES=$(echo $START_TIME | cut -d: -f2)
+            END_HOURS=$(echo $END_TIME | cut -d: -f1)
+            END_MINUTES=$(echo $END_TIME | cut -d: -f2)
+            START_HOURS_1=${START_HOURS:0:1}
+            START_HOURS_2=${START_HOURS:1:1}
+            START_MINUTES_1=${START_MINUTES:0:1}
+            START_MINUTES_2=${START_MINUTES:1:1}
+            END_HOURS_1=${END_HOURS:0:1}
+            END_HOURS_2=${END_HOURS:1:1}
+            END_MINUTES_1=${END_MINUTES:0:1}
+            END_MINUTES_2=${END_MINUTES:1:1}
+            CALC_START_TIME=$((((($START_HOURS_1*10)+$START_HOURS_2)*60)+(($START_MINUTES_1*10)+$START_MINUTES_2)))
+            CALC_END_TIME=$((((($END_HOURS_1*10)+$END_HOURS_2)*60)+(($END_MINUTES_1*10)+$END_MINUTES_2)))
+            if [[ $CALC_START_TIME -gt $CALC_END_TIME ]]; then
+                    SPEND_TIME_BEFORE_MIDNIGHT=$((1440-$CALC_START_TIME))
+                    SPEND_TIME=$(($SPEND_TIME_BEFORE_MIDNIGHT+$CALC_END_TIME))
+            else
+                    SPEND_TIME=$(($CALC_END_TIME-$CALC_START_TIME))
+            fi
+
+            #Calculate backup
+            BACKUP_SIZE=$(cat /tmp/${TODAY_DATE}_Rsync_$var2.txt | grep "Total bytes received: " | awk '{print $4}')
+
+            #Remove temporal file
+            rm -f /tmp/${TODAY_DATE}_Rsync_$var2.txt
+
+
+            ####   ADD The name of server + spend time + size of backup
+                echo "--------------------------" >> /tmp/Rsync_Robocopy.txt
+                echo "--------------------------" >> /tmp/Rsync_Robocopy.txt
+                echo "$var2" >> /tmp/Rsync_Robocopy.txt
+                echo "Time spend : $SPEND_TIME" >> /tmp/Rsync_Robocopy.txt
+                echo "Size of backup : $BACKUP_SIZE bytes" >> /tmp/Rsync_Robocopy.txt
+
+            # If there is errors, add the name of the server to the list
+            if [[ $ERRORS_COUNT -ne 0 ]];then
+                   echo "$var2" >> /tmp/Rsync_Robocopy_errors.txt
+            fi
+        done
+
+
+
+
+#############################################################
+#                           OUTPUT                          #
+#############################################################
+    #Final output to check_mk if there was no Critical errors.
+    #If there is no errors during the transfer of files to server1 then is ok or if not, show
+    #In wich servers the error was caused
+
+    if [[ $(wc -l /tmp/Rsync_Robocopy_errors.txt | awk '{print $1}') -eq 0 ]];then
+        status=0
+        echo "$status Rsync_Robocopy - $statustxt The transfer was done corretly"
+    else
+        status=1
+        while read line; do
+            temp+=$line" "
+        done < /tmp/Rsync_Robocopy_errors.txt
+        echo "$status Rsync_Robocopy - $statustxt Copy error in server $temp"
+    fi
+
