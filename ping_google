@@ -1,0 +1,18 @@
+#!/bin/bash
+
+#Script installed as a local script on the machines that need
+#to have permanten access to internet that pings google DNS 
+#to make sure the conection is working ok
+
+
+host=8.8.8.8
+if ping -c 1 $host &> /dev/nul
+then
+  status=0
+  statustxt="OK - host $host is reachable"
+  else
+    status=2
+    statustxt="CRITICAL - host $host is not reachable"
+    fi
+    echo "$status ping_google - $statustxt"
+
