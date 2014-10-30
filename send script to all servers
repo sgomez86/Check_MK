@@ -1,0 +1,51 @@
+#! /bin/sh
+
+#Script that copy one script located on /usr/lib/check_mk_agent/local/ to one or more server
+#And puts it on /usr/lib/check_mk_agent/local/ on the remote computer
+
+
+servers=(server1 server2 server3 server4)
+
+print_usage() {
+    echo "One username with enougth rights need to be given as first argument"
+    echo "The name of the scrtip to copy needs to be given as a second argument"
+    echo "Example:  ./send_file jondoe script1"
+
+   }
+if [ $# -lt 2 ]; then
+    print_usage
+    exit $STATE_UNKNOWN
+fi
+
+if [ $1 = "--help" ]; then
+        print_usage
+    exit $STATE_UNKNOWN
+fi
+
+
+echo Type \"T\" to update all servers or \"S\" to specify one server
+    read saisie
+    case "$saisie" in
+        t|T )
+
+for SERVER in  ${servers[*]}; do
+    /bin/echo updating /usr/lib/check_mk_agent/local/$2 on $SERVER/
+    /usr/bin/scp -i /home/$1/.ssh/id_rsa /usr/lib/check_mk_agent/local/$2 $1@$SERVER:/home/$1
+    /usr/bin/ssh -i /home/$1/.ssh/id_rsa $1@$SERVER "yes | sudo -S  mv /home/$1/$2 /usr/lib/check_mk_agent/local/"
+
+done
+
+
+
+        ;;
+        s|S )
+        echo "Entrer the name or IP Address"
+        read SERVER
+        server=$SERVER
+        /bin/echo updating /usr/lib/check_mk_agent/local/$2 on $SERVER
+        /usr/bin/scp -i /home/$1/.ssh/id_rsa /usr/lib/check_mk_agent/local/$2 $1@$SERVER:/home/$1
+        /usr/bin/ssh -i /home/$1/.ssh/id_rsa $1@$SERVER "yes |  sudo -S  mv /home/$1/$2 /usr/lib/check_mk_agent/local/"
+
+        ;;
+        esac
+exit 0
