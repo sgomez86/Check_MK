@@ -1,0 +1,92 @@
+#!/bin/bash
+
+#Script that checks that a local Backup script have run properly
+
+
+day_of_week=$(date -u | cut -d " " -f1)
+#pre-requis
+# liens vers commandes
+ECHO_PATH="/bin/echo"
+CUT_PATH="/usr/bin/cut"
+CAT_PATH="/bin/cat"
+# Save the raport_config values for easy use
+REMOTE_COMMAND='cat /mnt/data/save/last_save/rapport_saveconfig'
+file_status=$($REMOTE_COMMAND | grep -c "No such file or directory")
+
+#Data extracted from the raport_saveconfig file
+NBRE_FICHIERS=$($REMOTE_COMMAND | grep NBRE_FICHIERS | cut -d "=" -f2)
+TAILLE_FICHIERS=$($REMOTE_COMMAND | grep TAILLE_FICHIERS | cut -d "=" -f2)
+TAILLE_FICHIERS=$(($TAILLE_FICHIERS/1024 | bc)) # mour mettre en Mo au lieu de Ko
+RESULT_INNOBACKUP=$($REMOTE_COMMAND | grep RESULT_INNOBACKUP |cut -d "=" -f2)
+RESULT_TAR=$($REMOTE_COMMAND | grep RESULT_TAR | cut -d "=" -f2)
+RESULT_UPLOAD=$($REMOTE_COMMAND | grep RESULT_UPLOAD |  cut -d "=" -f2)
+RESULT_SLAPCAT=$($REMOTE_COMMAND | grep RESULT_SLAPCAT |  cut -d "=" -f2)
+DATE_SAUVEGARDE=$($REMOTE_COMMAND | grep DATE_SAUVEGARDE |  cut -d "=" -f2)
+mon=${DATE_SAUVEGARDE:2:2}
+da=${DATE_SAUVEGARDE:0:2}
+yea=${DATE_SAUVEGARDE:4:2}
+
+# Taille de Fichier sur le serveur sauvegarde
+
+     if [[ "$RESULT_TAR" > "0" ]];then
+         if [[ "$RESULT_UPLOAD" > "0" ]];then
+            status=2
+            echo "$status  Backup_Check - $statustxt WARNING - Erreur(s) dans la compression et l'upload - Nbr fichiers: $NBRE_FICHIERS - Taille sauvegarde: $TAILLE_FICHIERS Mo | nbr_file="$NBRE_FICHIERS"; size_file="$TAILLE_FICHIERS"Mo"
+            exit 0
+         else
+            satatus=1
+            echo "$status  Backup_Check - $statustxt WARNING - Erreur(s) lors de la compression locale (tar)- Nbr fichiers: $NBRE_FICHIERS - Taille sauvegarde: $TAILLE_FICHIERS Mo | nbr_file="$NBRE_FICHIERS"; size_file="$TAILLE_FICHIERS"Mo"
+            exit 0
+         fi
+     fi
+
+    if [[ "$RESULT_INNOBACKUP" > "0" ]];then
+        satatus=1
+        echo "$status  Backup_Check - $statustxt  WARNING - Erreur(s) lors de la sauvegarde des bases MYSQL (Innobackup) - Nbr fichiers: $NBRE_FICHIERS - Taille sauvegarde: $TAILLE_FICHIERS Mo | nbr_file="$NBRE_FICHIERS";size_file="$TAILLE_FICHIERS"Mo"
+        exit 0
+    fi
+
+    if [[ "$RESULT_SLAPCAT" > "0" ]];then
+        status=1
+        echo  "$status  Backup_Check - $statustxt  WARNING - Erreur(s) lors de la sauvegarde des bases LDAP (Slapcat) - Nbr fichiers: $NBRE_FICHIERS - Taille sauvegarde: $TAILLE_FICHIERS Mo | nbr_file="$NBRE_FICHIERS";size_file="$TAILLE_FICHIERS"Mo"
+        exit 0
+    fi
+
+    #Backup are done from Monday to Friday in some servers and in the others just once a week on saturday.
+
+    #If not exist and is not saturday or sunday
+    if  [[ $file_status -eq 1 ]] && [[ $day_of_week -ne "samedi" || $day_of_week -ne "dimanche" || $day_of_week -ne "saturday" || $day_of_week -ne "sunday" ]];then
+        status=2
+        echo "$status  Backup_Check - $statustx  CRITICAL - File does not exist :" $file_status "| nbr_file=0, size_file=0"
+        exit 0
+    else
+        #if exist
+        if [  $file_status -eq 0  ];then
+            #If copy was made 1 day ago then is OK
+            if [  $((($(date +%s)-$(date --date="$yea$mon$da" +%s))/(60*60*24))) == "1"  ];then
+                status=0
+                echo "$status  Backup_Check - $statustxt  OK - Nbr fichiers:" $NBRE_FICHIERS "-Taille:" $TAILLE_FICHIERS "Mo | nbr_file="$NBRE_FICHIERS";size_file="$TAILLE_FICHIERS"Mo;"
+                exit 0
+            else
+                #If is friday then last copy was 3 days ago
+                if [[ $day_of_week -eq "vendredi" || $day_of_week -eq "friday" ]] && [  $((($(date +%s)-$(date --date="$yea$mon$da" +%s))/(60*60*24))) == "3" ];then
+                    status=0
+                    echo "$status  Backup_Check - $statustxt OK - Nbr fichiers:" $NBRE_FICHIERS "-Taille:" $TAILLE_FICHIERS "Mo | nbr_file="$NBRE_FICHIERS";size_file="$TAILLE_FICHIERS"Mo;"
+                    exit 0
+                else
+                    # If is a server that does copies once a week, then is saturday and last copy was 7 days ago
+                    if [[ $day_of_week -eq "samedi" ||$day_of_week -eq "saturday" ]] && [  $((($(date +%s)-$(date --date="$yea$mon$da" +%s))/(60*60*24))) == "7" ];then
+                        status=0
+                        echo "$status  Backup_Check - $statustxt OK - Nbr fichiers:" $NBRE_FICHIERS "-Taille:" $TAILLE_FICHIERS "Mo | nbr_file="$NBRE_FICHIERS";size_file="$TAILLE_FICHIERS"Mo;"
+                        exit 0
+                    else
+                        status=0
+                        echo "$status  Backup_Check - $statustxt  OK - Nbr fichiers:" $NBRE_FICHIERS "-Taille:" $TAILLE_FICHIERS "Mo | nbr_file="$NBRE_FICHIERS";size_file="$TAILLE_FICHIERS"Mo;"
+                        exit 0
+                    fi
+                fi
+            fi
+        fi
+    fi
+
+ exit 0
